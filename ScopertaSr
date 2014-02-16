@@ -1,0 +1,438 @@
+#include <Wire.h>
+#include <nunchuck_funcs.h>
+#include <LiquidCrystal.h>
+#include <LCDKeypad.h>
+
+
+//WII NUNCHUCK CODE
+unsigned long transmitterThrottle = 0;
+unsigned long transmitterLeftRight = 0;
+unsigned long transmitterBreak = 0;
+const int rightFwdPWM = 7; //PWM Output for Right Forward
+const int rightRevPWM = 6; //PWM Output for Right Reverse
+const int leftFwdPWM = 5; //PWM Output for Left Forward
+const int leftRevPWM = 4; //PWM Output for Left Reverse
+
+//Rate of change code:
+int maxRateOfChange = 10; //Adjust this if it is behaving like a slug
+int realLeftMotor = 0; //This will adjust itself in the code, no touchy
+int realRightMotor = 0; // "     "
+char realDirection = 'S';
+
+//Create function to enable and disable breaks
+
+boolean zbutOff = false; //Used to deturnmin if the Zbutton has just been released.
+boolean rcFWD = false;
+boolean rcREV = false;
+unsigned int leftMotor = 0;
+unsigned int rightMotor = 0;
+unsigned int rcRIGHT = 0; //Right turning flag
+unsigned int rcLEFT = 0; //Left turning flag
+
+
+int loop_cnt=0;
+
+byte accx,accy,zbut,cbut,joyx,joyy;
+//END WII NUNCHUCK CODE
+int xvalue = 0;
+int yvalue = 0;
+char charDir = 'S';
+char keyPad = 'V';
+unsigned int counter = 0;
+unsigned int pinLeftEnable = 2; //Enable high (PWM) LEFT
+unsigned int pinRightEnable = 3; //Enable high (PWM) RIGHT
+unsigned int pinDisable = 22; //Disable (Both Motors)
+unsigned int pinFwdLeft = 23; //Forward Left
+unsigned int pinRevLeft = 24; //Reverse Left
+unsigned int pinFwdRight = 25; //Forward Right
+unsigned int pinRevRight = 26; //Reverse Right
+unsigned int pinBreak  = 27; //Breaks  all but betty
+//unsigned int pinBreak  = 29; //Breaks betty
+char leftChar[4] = "";
+char rightChar[4] = "";
+boolean bDone = false;
+char inData[80];
+byte index = 0;
+LCDKeypad lcd;
+
+void setup()
+{
+  //Wii Nunchuck code
+  nunchuck_setpowerpins();
+  nunchuck_init(); // send the initilization handshake
+  //End wii Nunchuck code
+  
+  
+  pinMode(pinBreak, OUTPUT);
+  pinMode(pinLeftEnable, OUTPUT);
+  pinMode(pinRightEnable, OUTPUT);
+  pinMode(pinDisable, OUTPUT);
+  pinMode(pinFwdLeft, OUTPUT);
+  pinMode(pinRevLeft, OUTPUT);
+  pinMode(pinFwdRight, OUTPUT);
+  pinMode(pinRevRight, OUTPUT);
+
+
+  pinMode(13, OUTPUT);
+  digitalWrite(13, HIGH);
+  lcd.begin(16, 2);
+  lcd.clear();
+  lcd.print("   Scoperta 1");
+  lcd.setCursor(0,1);
+  lcd.print("");
+  delay(3000);
+  Serial.begin(9600);
+  Serial2.begin(9600);
+
+
+  xvalue = 0;
+  yvalue = 0;
+  
+}
+
+void loop(){
+  //Update Wii Nunchuck data  
+  nunchuck_get_data();
+  zbut = nunchuck_zbutton();
+  cbut = nunchuck_cbutton(); 
+  joyy = nunchuck_joyy();   // ranges from approx 30 - 224
+  joyx = nunchuck_joyx();   // ranges from approx 25 - 225
+  //Convert Nunchuck data to usable numbers.
+  //THROTTLE
+
+  if (zbut == 1) {  //*************************************USE NUNCHUCK FOR THROTTLE**********************************************
+    zbutOff = true;
+    int SteerCalc = 0;
+    unsigned int transmitterThrottle = joyy; //read RC channel, wait max of 0.1 seconds for pulse
+    transmitterThrottle = constrain(transmitterThrottle, 0, 255);
+    if (transmitterThrottle < 120) {
+      transmitterThrottle = map(transmitterThrottle, 120, 0, 0, 255);
+      rcREV = true;
+      rcFWD = false;    
+      //Reverse
+      charDir = 'R';
+    }
+    else if (transmitterThrottle > 135) {
+      transmitterThrottle = map(transmitterThrottle, 255, 135, 255, 0);
+      rcREV = false;
+      rcFWD = true;   
+      //Forward
+      charDir = 'F';
+    }
+    else {
+      transmitterThrottle = 0;
+      rcREV = false;
+      rcFWD = false;   
+      charDir = 'S';
+      //Stopped
+    }  
+
+    leftMotor = transmitterThrottle; 
+    rightMotor = transmitterThrottle;
+
+    lcd.setCursor(0,1);
+    lcd.print(realRightMotor);
+    lcd.print(" ");
+    lcd.print(rightMotor);
+
+  //STEERING  
+    transmitterLeftRight = joyx;
+    transmitterLeftRight = constrain(transmitterLeftRight, 0, 255);
+    if (transmitterLeftRight > 140) {
+      //RIGHT
+      transmitterLeftRight = map(transmitterLeftRight, 140, 255, 100, 0);
+      rcRIGHT = true;
+      rcLEFT = false;
+      //Right
+      rightMotor -= rightMotor * transmitterLeftRight / 100;
+    }
+  
+    else if (transmitterLeftRight < 115) {
+      //LEFT
+      transmitterLeftRight = map(transmitterLeftRight, 115, 0, 0, 100);
+      rcRIGHT = false;
+      rcLEFT = true;    
+      //Left
+      leftMotor -= leftMotor * transmitterLeftRight / 100;
+    }
+  
+    else {
+      //STOPPED
+      transmitterLeftRight = 0;
+      rcRIGHT = false;
+      rcRIGHT = false;    
+      //Straight
+    }  
+    
+    funUpdateSpeed(realLeftMotor, leftMotor, maxRateOfChange, realDirection, charDir, realLeftMotor, realDirection);
+    funUpdateSpeed(realRightMotor, rightMotor, maxRateOfChange, realDirection, charDir, realRightMotor, realDirection);
+    
+    if (realDirection == 'S') {  
+      digitalWrite(pinDisable, HIGH);
+      digitalWrite(pinBreak, LOW);
+      analogWrite(pinLeftEnable, 0);
+      analogWrite(pinRightEnable, 0);
+      digitalWrite(pinFwdLeft, LOW);
+      digitalWrite(pinRevLeft, LOW);
+      digitalWrite(pinFwdRight, LOW);
+      digitalWrite(pinRevRight, LOW);
+      digitalWrite(pinBreak, LOW);
+    }
+  
+    else if (realDirection == 'F') {
+      digitalWrite(pinDisable, LOW);    
+      analogWrite(pinLeftEnable, realLeftMotor);
+      analogWrite(pinRightEnable, realRightMotor);
+      digitalWrite(pinFwdLeft, HIGH);
+      digitalWrite(pinRevLeft, LOW);
+      digitalWrite(pinFwdRight, HIGH);
+      digitalWrite(pinRevRight, LOW);
+      digitalWrite(pinBreak, HIGH);
+    }
+  
+    else if (realDirection == 'R') {
+      digitalWrite(pinDisable, LOW);    
+      analogWrite(pinLeftEnable, realLeftMotor);
+      analogWrite(pinRightEnable, realRightMotor);
+      digitalWrite(pinFwdLeft, LOW);
+      digitalWrite(pinRevLeft, HIGH);
+      digitalWrite(pinFwdRight, LOW);
+      digitalWrite(pinRevRight, HIGH);
+      digitalWrite(pinBreak, HIGH);
+    }
+  
+    if (counter > 100) {
+      //funUpdateSpeed(int realSpeed, int targetSpeed, int maxRateOfChange, char realDirection, char targetDirection, int& outSpeed, char& outDirection){
+//      lcd.setCursor(0,1);
+//      lcd.print(leftChar);
+//      lcd.print("  ");
+//      lcd.setCursor(5,1);
+//      lcd.print(rightChar);
+//      lcd.print("  ");
+      lcd.setCursor(9, 1);
+      lcd.print(charDir);
+      counter = 0;
+    }
+    
+    
+  }
+  else {
+    funUpdateSpeed(realLeftMotor, leftMotor, maxRateOfChange, realDirection, charDir, realLeftMotor, realDirection);
+    funUpdateSpeed(realRightMotor, rightMotor, maxRateOfChange, realDirection, charDir, realRightMotor, realDirection);
+    
+    if (zbutOff == true) { //If zbutton was just released then reset.
+      zbutOff = false;
+      xvalue = 0;
+      yvalue = 0;
+      leftMotor = 0;
+      rightMotor = 0;
+      charDir = 'S';
+      digitalWrite(pinDisable, HIGH);
+      digitalWrite(pinBreak, LOW);
+      analogWrite(pinLeftEnable, 0);
+      analogWrite(pinRightEnable, 0);
+      digitalWrite(pinFwdLeft, LOW);
+      digitalWrite(pinRevLeft, LOW);
+      digitalWrite(pinFwdRight, LOW);
+      digitalWrite(pinRevRight, LOW);
+    }
+    //**********************************************************************************************************
+
+    index = 0;
+    bDone = false;
+/*
+    if (Serial2.available() > 12) {
+      if (GetActiveData(xvalue, yvalue, charDir, keyPad)) {
+      //  Serial.print(xvalue);
+      //  Serial.print("  -  ");
+      //  Serial.print(yvalue); 
+      //  Serial.print("  -  ");
+      //  Serial.print(charDir);
+      //  Serial.print("  -  ");
+      //  Serial.print(leftChar);
+      //  Serial.print("  -  ");
+      //  Serial.print(rightChar);
+      //  Serial.print("  -  ");
+      //  Serial.println(keyPad); 
+
+        if (charDir == '`) {  
+          digitalWrite(pinDisable, HIGH);
+          digitalWrite(pinBreak, LOW);
+          analogWrite(pinLeftEnable, 0);
+          analogWrite(pinRightEnable, 0);
+          digitalWrite(pinFwdLeft, LOW);
+          digitalWrite(pinRevLeft, LOW);
+          digitalWrite(pinFwdRight, LOW);
+          digitalWrite(pinRevRight, LOW);
+        }
+
+        else if (charDir == 'F') {
+          digitalWrite(pinDisable, LOW);    
+          analogWrite(pinLeftEnable, xvalue);
+          analogWrite(pinRightEnable, yvalue);
+          digitalWrite(pinFwdLeft, HIGH);
+          digitalWrite(pinRevLeft, LOW);
+          digitalWrite(pinFwdRight, HIGH);
+          digitalWrite(pinRevRight, LOW);
+        }
+
+        else if (charDir == 'R') {
+          digitalWrite(pinDisable, LOW);    
+          analogWrite(pinLeftEnable, xvalue);
+          analogWrite(pinRightEnable, yvalue);
+          digitalWrite(pinFwdLeft, LOW);
+          digitalWrite(pinRevLeft, HIGH);
+          digitalWrite(pinFwdRight, LOW);
+          digitalWrite(pinRevRight, HIGH);
+        }
+
+        if (counter > 100) {
+          lcd.setCursor(0,1);
+          lcd.print(leftChar);
+          lcd.print("  ");
+          lcd.setCursor(5,1);
+          lcd.print(rightChar);
+          lcd.print("  ");
+          lcd.setCursor(9, 1);
+          lcd.print(charDir);
+          counter = 0;
+        }
+
+      }
+*/
+    counter++;
+//*************************************************************************************
+    //}      
+  }
+  Serial.print("Local ");
+  Serial.print((zbutOff)?"true":"false");
+  Serial.print(" - ");
+  Serial.print(realRightMotor);
+  Serial.print(" - ");
+  Serial.print(realLeftMotor);
+  Serial.print(" - ");
+  Serial.print(rightMotor);
+  Serial.print(" - ");
+  Serial.println(leftMotor);
+  Serial.print(" - ");
+  Serial.println(realDirection);
+  
+}
+
+char read(){
+   //while(!Serial2.available());
+   return Serial2.read();     
+}
+
+boolean GetActiveData(int &L, int &R, char &dir, char &jbutton) {    
+    char aChar = read();
+    if(aChar != 'L') {
+      return false;
+    } 
+      //L000R000!S@0#
+    L = readThreeDigitsInt(leftChar);
+    aChar = read();
+    if(aChar != 'R') {
+      return false;
+    } 
+    R = readThreeDigitsInt(rightChar);
+    aChar = read();
+    if(aChar != '!') {
+      return false;
+    } 
+    dir = readDirection();
+    aChar = read();
+    if(aChar != '@') {
+      return false;
+    } 
+    jbutton = readButton();
+    aChar = read();
+    if(aChar != '#') {
+      return false;
+    } 
+    return true;
+}
+
+char readButton() {
+ return read();
+  
+  //return (Serial2.read() == '0')? false:true;
+}
+
+char readDirection(){
+  return read();
+}
+
+int readThreeDigitsInt(char* string){
+  int Temp = 0;  
+  string[0] = read();
+  string[1] = read();
+  string[2] = read();
+  string[3] = 0;
+  Temp = string[0] - '0';
+  Temp *= 10;
+  Temp += string[1] - '0';
+  Temp *= 10;
+  Temp += string[2] - '0';
+  
+  return Temp;
+  
+
+}
+
+void funUpdateSpeed(int realSpeed, int targetSpeed, int maxRateOfChange, char realDirection, char targetDirection, int& outSpeed, char& outDirection){
+  //
+  if (targetDirection == realDirection) {
+    if (realSpeed > targetSpeed) {
+      if (realSpeed - targetSpeed > maxRateOfChange) {
+        outSpeed = realSpeed - maxRateOfChange;
+      } else {
+        outSpeed = targetSpeed;
+      }
+    } else {
+      if (targetSpeed - realSpeed> maxRateOfChange) {
+        outSpeed = realSpeed + maxRateOfChange;
+      } else {
+        outSpeed = targetSpeed;
+      }
+    } 
+    outDirection = realDirection;
+  } else {
+    //case 1 forward -> reverse and case 4 reverse -> forward
+
+    if(( realDirection == 'F' && targetDirection == 'R' ) || (realDirection == 'R' && targetDirection == 'F')){
+      if( realSpeed - maxRateOfChange >= 0 ){
+        outSpeed = realSpeed - maxRateOfChange;
+        outDirection = realDirection;
+      } else if ( maxRateOfChange - realSpeed >= targetSpeed ){
+        outSpeed = targetSpeed;
+        outDirection = targetDirection;
+      } else {
+        outSpeed = maxRateOfChange - realSpeed;
+        outDirection = targetDirection;
+      }
+    }
+    //case 2 forward -> stop and case 3 reverse -> stop
+    if(( realDirection == 'F' && targetDirection == 'S' ) || (realDirection == 'R' && targetDirection == 'S')){    
+      if( realSpeed - maxRateOfChange > 0){
+        outSpeed = realSpeed - maxRateOfChange;
+      } else {
+        outSpeed = 0;
+        outDirection = 'S';
+      }  
+    }
+
+    //case 5 stop -> forward and case 6 stop -> reverse
+    if(( realDirection == 'S' && targetDirection == 'F' ) || (realDirection == 'S' && targetDirection == 'R')){    
+      if( realSpeed + maxRateOfChange == targetSpeed){
+        outSpeed = targetSpeed;
+        outDirection = targetDirection;
+      } else {
+        outSpeed = realSpeed + maxRateOfChange;
+        outDirection = targetDirection;
+      }  
+    }
+    
+  }
+
+}
